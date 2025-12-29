@@ -1,0 +1,9 @@
+{
+  "mcpServers": {
+    "my-gateway": {
+      "url": "http://localhost:8000",
+      "transport": "http",
+      "auth": "oauth"
+    }
+  }
+}

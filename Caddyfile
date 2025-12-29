@@ -1,0 +1,10 @@
+{$MCP_DOMAIN} {
+    # Automatic HTTPS via Let's Encrypt
+    reverse_proxy localhost:8000
+    
+    # Enable access logs
+    log {
+        output stdout
+        format console
+    }
+}

@@ -1,0 +1,21 @@
+[project]
+name = "mcp-gateway"
+version = "0.1.0"
+description = "FastMCP OAuth Gateway for aggregating multiple MCP servers"
+readme = "README.md"
+requires-python = ">=3.12"
+dependencies = [
+    "fastmcp>=2.12.0",
+    "python-dotenv>=1.0.0",
+]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build]
+packages = false
+
+[tool.uv]
+package = false
+dev-dependencies = []
