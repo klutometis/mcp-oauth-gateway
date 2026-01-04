@@ -1,111 +1,115 @@
-# Migration to FastMCP OAuth Proxy
+# MCP Gateway - TODO
 
-## Current Issues with mcp-auth-proxy
+## ✅ Completed (2026-01-04)
 
-1. **Protocol mismatch**: mcp-auth-proxy does HTTP-level proxying, doesn't understand MCP's HTTP+SSE protocol
-2. **Session handling**: MCP requires establishing SSE session first (GET /sse) before sending messages (POST /messages/)
-3. **Multi-server complexity**: Would need one mcp-auth-proxy instance per MCP server (different domains/ports)
-4. **Incomplete integration**: OAuth/DCR works but requests fail at MCP protocol layer
+### FastMCP Gateway with stdio Transport
 
-## FastMCP Solution
+Successfully deployed FastMCP OAuth gateway using stdio transport to eliminate HTTP proxy bottleneck.
 
-FastMCP's OAuth Proxy provides:
-- Multi-server aggregation from config (replaces mcp-proxy aggregation)
-- Native MCP protocol understanding (HTTP+SSE transport)
-- Built-in OAuth with DCR support for MCP clients
-- Google OAuth provider out of the box
-- Proper token management and security
+**What worked:**
+- ✅ FastMCP.as_proxy() with stdio servers (bypassing mcp-proxy)
+- ✅ Google OAuth with DCR support
+- ✅ Concurrent request handling (no blocking!)
+- ✅ Production deployment at https://mcp.example.com
+- ✅ Local testing with `./test-local.sh`
+- ✅ Automated deployment with `./deploy-gateway.sh`
 
-## Implementation Plan
+**Performance:**
+- Before: 30-60s response times with HTTP proxy chain
+- After: Fast (~3ms) with direct stdio connections
 
-### 1. Create FastMCP Gateway Script
-
-Create `prg/mcp-gateway/gateway.py`:
-
-```python
-from fastmcp import FastMCP
-from fastmcp.server.auth.providers.google import GoogleProvider
-import os
-
-# Configure Google OAuth
-auth = GoogleProvider(
-    client_id=os.environ["MCP_OIDC_CLIENT_ID"],
-    client_secret=os.environ["MCP_OIDC_CLIENT_SECRET"],
-    base_url=f"https://{os.environ['MCP_DOMAIN']}",
-    allowed_users=[os.environ["MCP_ALLOWED_USERS"]],
-)
-
-# Aggregate all MCP servers
-config = {
-    "mcpServers": {
-        "context7": {
-            "url": "http://localhost:3100/servers/context7/sse",
-            "transport": "http"
-        },
-        "firecrawl": {
-            "url": "http://localhost:3100/servers/firecrawl/sse",
-            "transport": "http"
-        },
-        "linkup": {
-            "url": "http://localhost:3100/servers/linkup/sse",
-            "transport": "http"
-        },
-        "openmemory": {
-            "url": "http://localhost:3100/servers/openmemory/sse",
-            "transport": "http"
-        },
-        "perplexity": {
-            "url": "http://localhost:3100/servers/perplexity/sse",
-            "transport": "http"
-        }
-    }
-}
-
-# Create authenticated gateway
-gateway = FastMCP.as_proxy(config, name="MCP Gateway", auth=auth)
-
-if __name__ == "__main__":
-    gateway.run(transport="http", host="0.0.0.0", port=443)
+**Architecture:**
+```
+Production: Internet → Caddy (HTTPS) → FastMCP (port 8000) → stdio MCP servers
+Local test: localhost:8000 → FastMCP → stdio MCP servers
 ```
 
-### 2. Update Deployment
+**Key files:**
+- `gateway.py` - FastMCP proxy with stdio configuration
+- `test-local.sh` - Local Docker testing script
+- `deploy-gateway.sh` - GCP deployment automation
+- `entrypoint.sh` - Smart startup (Caddy for prod, direct for local)
+- `Dockerfile` - Includes Node.js, uv, and Caddy
 
-- Install FastMCP in Docker image
-- Replace mcp-auth-proxy with gateway.py
-- Keep mcp-proxy running on localhost:3100 as backend
-- Configure production keys/storage per FastMCP docs
+## Maintenance Tasks
 
-### 3. OAuth Configuration
+### Ongoing
+- [ ] Monitor performance in production
+- [ ] Keep MCP server packages up to date (`npx -y` auto-updates)
+- [ ] Review Caddy logs for SSL certificate renewal
+- [ ] Update OAuth redirect URIs if domain changes
 
-Google OAuth redirect URI:
-- Update to FastMCP's callback path (check docs for exact path)
-- Likely: `https://mcp.example.com/auth/callback`
+### Future Enhancements
+- [ ] Add health check endpoint
+- [ ] Add metrics/monitoring (request latency, error rates)
+- [ ] Consider Redis for session storage if scaling to multiple instances
+- [ ] Document client configuration for different MCP clients
 
-### 4. Client Configuration
+## Reference
 
-**TypingMind/Gemini CLI:**
-- Server URL: TBD (check FastMCP exposed paths)
-- OAuth flow will work natively via DCR
-- Each server available with prefix: `context7_*`, `firecrawl_*`, etc.
+### Testing Locally
+```bash
+# 1. Ensure environment variables are set
+source ~/etc/dotfiles/dot-env-secrets
 
-## References
+# 2. Run test script
+./test-local.sh
 
-- [FastMCP Proxy Servers](https://gofastmcp.com/servers/proxy)
-- [FastMCP OAuth Proxy](https://gofastmcp.com/servers/auth/oauth-proxy)
-- [FastMCP Multi-Server Config](https://gofastmcp.com/servers/proxy#multi-server-configurations)
+# 3. Test with MCP Inspector
+npx @modelcontextprotocol/inspector http://localhost:8000
+```
 
-## Timeline
+### Deploying to Production
+```bash
+# 1. Ensure all environment variables are set (from dot-env-secrets)
+source ~/etc/dotfiles/dot-env-secrets
 
-1. ✅ Identified mcp-auth-proxy limitations
-2. ✅ Found FastMCP as proper solution
-3. ⏳ Create gateway.py implementation
-4. ⏳ Test locally
-5. ⏳ Deploy to GCP
-6. ⏳ Verify OAuth flow works end-to-end
+# 2. Ensure DNS points to static IP
+# mcp.example.com → GCP static IP
 
-## Notes
+# 3. Deploy
+./deploy-gateway.sh
 
-- FastMCP properly handles MCP protocol (stdio, HTTP+SSE, Streamable HTTP)
-- Built-in OAuth proxy bridges DCR clients to traditional providers
-- Single endpoint serves all aggregated servers
-- Production requires Redis/DynamoDB for token storage across instances
+# 4. Watch logs
+gcloud compute ssh mcp-gateway \
+  --project="${GCP_PROJECT_ID}" \
+  --zone="us-central1-a" \
+  --command='docker logs -f mcp-gateway'
+```
+
+### Required Environment Variables
+- `GCP_PROJECT_ID` - GCP project for deployment
+- `GCP_REGION` - GCP region (default: us-central1)
+- `MCP_DOMAIN` - Domain for gateway (e.g., mcp.example.com)
+- `MCP_OIDC_CLIENT_ID` - Google OAuth client ID
+- `MCP_OIDC_CLIENT_SECRET` - Google OAuth client secret
+- `MCP_ALLOWED_USERS` - Comma-separated email addresses
+- API keys for each MCP server:
+  - `CONTEXT7_API_KEY`
+  - `FIRECRAWL_API_KEY`
+  - `LINKUP_API_KEY`
+  - `OPENMEMORY_API_KEY`
+  - `PERPLEXITY_API_KEY`
+
+### Client Configuration
+
+Add to MCP client config (Gemini CLI, etc.):
+
+```json
+{
+  "mcpServers": {
+    "gateway": {
+      "url": "https://mcp.example.com/mcp",
+      "transport": "http"
+    }
+  }
+}
+```
+
+The gateway aggregates all servers, so you only need one entry. Tools will be prefixed by server name (e.g., `context7_resolve-library-id`, `firecrawl_firecrawl_scrape`).
+
+## Archived: mcp-auth-proxy Exploration
+
+We explored using per-server mcp-auth-proxy instances but discovered FastMCP with stdio was simpler and equally performant. See NOTES.md for full details.
+
+The docker-compose.yml, Caddyfile.local, and per-service .env files were created during this exploration but are not used in the final solution.

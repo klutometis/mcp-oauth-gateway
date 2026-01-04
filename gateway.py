@@ -3,7 +3,8 @@
 FastMCP Gateway with Google OAuth
 
 Aggregates multiple MCP servers and provides OAuth authentication
-via Google. Replaces mcp-auth-proxy with proper MCP protocol support.
+via Google. Uses stdio transport directly to avoid HTTP proxy
+performance issues (https://github.com/jlowin/fastmcp/issues/1583).
 """
 
 from fastmcp import FastMCP
@@ -57,28 +58,37 @@ def main():
         base_url=base_url,
     )
     
-    # Aggregate all MCP servers from localhost mcp-proxy
+    # Aggregate all MCP servers using stdio transport (fast!)
+    # Copied from servers.json
     config = {
         "mcpServers": {
             "context7": {
-                "url": "http://localhost:3100/servers/context7/mcp",
-                "transport": "http"
+                "command": "npx",
+                "args": ["-y", "@upstash/context7-mcp"],
+                "transport": "stdio"
             },
             "firecrawl": {
-                "url": "http://localhost:3100/servers/firecrawl/mcp",
-                "transport": "http"
+                "command": "npx",
+                "args": ["-y", "firecrawl-mcp"],
+                "transport": "stdio"
             },
             "linkup": {
-                "url": "http://localhost:3100/servers/linkup/mcp",
-                "transport": "http"
+                "command": "uvx",
+                "args": ["mcp-search-linkup"],
+                "transport": "stdio"
             },
             "openmemory": {
-                "url": "http://localhost:3100/servers/openmemory/mcp",
-                "transport": "http"
+                "command": "npx",
+                "args": ["-y", "openmemory"],
+                "env": {
+                    "CLIENT_NAME": "openmemory"
+                },
+                "transport": "stdio"
             },
             "perplexity": {
-                "url": "http://localhost:3100/servers/perplexity/mcp",
-                "transport": "http"
+                "command": "npx",
+                "args": ["-y", "perplexity-mcp"],
+                "transport": "stdio"
             }
         }
     }
@@ -87,7 +97,7 @@ def main():
     print(f"Starting MCP Gateway with Google OAuth")
     print(f"Base URL: {base_url}")
     print(f"Access control: Google OAuth + consent screen")
-    print(f"Aggregating {len(config['mcpServers'])} MCP servers")
+    print(f"Aggregating {len(config['mcpServers'])} MCP servers via stdio (fast!)")
     
     gateway = FastMCP.as_proxy(config, name="MCP Gateway", auth=auth)
     

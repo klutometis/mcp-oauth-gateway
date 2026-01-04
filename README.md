@@ -1,171 +1,242 @@
 # MCP Gateway with OAuth
 
-FastMCP-based gateway that aggregates multiple MCP servers with Google OAuth authentication.
+FastMCP-based OAuth gateway that aggregates multiple MCP servers behind a single authenticated endpoint.
 
 ## Features
 
-- **Multi-server aggregation**: Exposes all MCP servers through a single authenticated endpoint
-- **Google OAuth**: Proper OAuth 2.0 with Dynamic Client Registration (DCR) support
-- **MCP protocol native**: Understands HTTP+SSE transport unlike generic HTTP proxies
-- **Production ready**: Built-in security, token management, and error handling
+- **Multi-server aggregation**: Single endpoint for all MCP servers
+- **Google OAuth**: OAuth 2.0 with Dynamic Client Registration (DCR)
+- **High performance**: Direct stdio connections to MCP servers (~3ms latency)
+- **Concurrent requests**: Handles multiple simultaneous requests efficiently
+- **Production ready**: Deployed at https://mcp.example.com
 
 ## Architecture
 
+### Current (Fast!)
+
 ```
-Client (TypingMind/Gemini CLI) 
-    ↓ OAuth/DCR
-FastMCP Gateway (port 443)
-    ↓ HTTP+SSE
-mcp-proxy (localhost:3100)
-    ↓ stdio
-Individual MCP servers (context7, firecrawl, etc.)
+Client → FastMCP Gateway (port 8000) → stdio MCP servers
+```
+
+FastMCP connects directly to MCP servers via stdio, avoiding HTTP proxy overhead.
+
+### Production Deployment
+
+```
+Internet (HTTPS:443) → Caddy (TLS termination) → FastMCP (8000) → stdio MCP servers
+```
+
+Caddy handles automatic HTTPS with Let's Encrypt certificates.
+
+## Quick Start
+
+### Prerequisites
+
+Ensure these environment variables are set (from `~/etc/dotfiles/dot-env-secrets`):
+- `MCP_DOMAIN` - Your domain (e.g., `mcp.example.com`)
+- `MCP_OIDC_CLIENT_ID` - Google OAuth Client ID
+- `MCP_OIDC_CLIENT_SECRET` - Google OAuth Client Secret
+- `MCP_ALLOWED_USERS` - Allowed email addresses
+- `GCP_PROJECT_ID` - GCP project for deployment
+- API keys: `CONTEXT7_API_KEY`, `FIRECRAWL_API_KEY`, `LINKUP_API_KEY`, `OPENMEMORY_API_KEY`, `PERPLEXITY_API_KEY`
+
+### Local Testing
+
+```bash
+# 1. Source environment variables
+source ~/etc/dotfiles/dot-env-secrets
+
+# 2. Run test script (builds Docker, starts gateway)
+./test-local.sh
+
+# 3. Test with MCP Inspector
+npx @modelcontextprotocol/inspector http://localhost:8000
+```
+
+The test script:
+- Builds Docker image
+- Starts gateway on port 8000
+- Displays OAuth endpoints and logs
+- Waits for your testing, then cleans up
+
+### Production Deployment
+
+```bash
+# 1. Ensure environment is loaded
+source ~/etc/dotfiles/dot-env-secrets
+
+# 2. Deploy to GCP
+./deploy-gateway.sh
+```
+
+The deploy script:
+- Builds and pushes Docker image to Artifact Registry
+- Creates/updates GCP VM with static IP
+- Configures firewall rules (ports 80, 443)
+- Starts container with Caddy for HTTPS
+- Tails logs for verification
+
+**Important:** Ensure DNS A record points to the static IP:
+```
+mcp.example.com → <static-ip-from-deploy-script>
 ```
 
 ## Project Structure
 
 ```
 .
-├── gateway.py          # FastMCP gateway with OAuth
-├── servers.json        # mcp-proxy server configuration
+├── gateway.py          # FastMCP gateway with stdio configuration
 ├── pyproject.toml      # Python dependencies (uv managed)
-├── Dockerfile          # Container deployment
-├── entrypoint.sh       # Startup script (mcp-proxy → gateway)
-└── .env.example        # Configuration template
+├── Dockerfile          # Multi-stage build (Python + Node.js + Caddy)
+├── entrypoint.sh       # Smart startup (Caddy for prod, direct for local)
+├── Caddyfile           # HTTPS termination config
+├── test-local.sh       # Local Docker testing script
+├── deploy-gateway.sh   # GCP deployment automation
+├── NOTES.md            # Architecture decisions and debugging notes
+└── TODO.md             # Task tracking and maintenance checklist
 ```
 
-## Environment Variables
+## Configuration
 
-Required:
-- `MCP_OIDC_CLIENT_ID`: Google OAuth Client ID
-- `MCP_OIDC_CLIENT_SECRET`: Google OAuth Client Secret
-- `MCP_DOMAIN`: Public domain (e.g., `mcp.example.com`)
-- `MCP_ALLOWED_USERS`: Comma-separated list of allowed email addresses
+### gateway.py
 
-Optional API keys (passed to mcp-proxy):
-- `CONTEXT7_API_KEY`
-- `FIRECRAWL_API_KEY`
-- `LINKUP_API_KEY`
-- `OPENMEMORY_API_KEY`
-- `PERPLEXITY_API_KEY`
+Configures MCP servers with stdio transport:
 
-## Local Development
+```python
+config = {
+    "mcpServers": {
+        "context7": {
+            "command": "npx",
+            "args": ["-y", "@upstash/context7-mcp"],
+            "transport": "stdio"
+        },
+        "firecrawl": {
+            "command": "npx",
+            "args": ["-y", "firecrawl-mcp"],
+            "transport": "stdio"
+        },
+        # ... more servers
+    }
+}
 
-### Setup
-
-```bash
-# Install dependencies with uv
-uv sync
-
-# Ensure your central secrets are loaded in your shell
-# (dot-env-secrets should already be in your environment)
-# Required variables:
-# - MCP_OIDC_CLIENT_ID
-# - MCP_OIDC_CLIENT_SECRET  
-# - MCP_ALLOWED_USERS
-# - CONTEXT7_API_KEY, FIRECRAWL_API_KEY, etc.
+gateway = FastMCP.as_proxy(config, name="MCP Gateway", auth=auth)
+gateway.run(transport="http", host="0.0.0.0", port=8000)
 ```
 
-### Running Locally
+### Caddyfile
 
-**Terminal 1 - Start mcp-proxy:**
-```bash
-# mcp-proxy aggregates the individual MCP servers
-./run.sh uv run mcp-proxy --port=3100 --host=127.0.0.1 --pass-environment \
-  --named-server-config servers.json
+HTTPS termination with automatic Let's Encrypt:
+
+```caddyfile
+{$MCP_DOMAIN} {
+    reverse_proxy localhost:8000
+    log {
+        output stdout
+        format console
+    }
+}
 ```
-
-**Terminal 2 - Start FastMCP Gateway:**
-```bash
-# Loads secrets from dot-env-secrets automatically
-./run.sh
-
-# Gateway will start on http://localhost:8000
-```
-
-**Note:** The `run.sh` script sets `MCP_DOMAIN=localhost:8000` for local development. Your centralized secrets from `dot-env-secrets` should already be loaded in your shell environment.
-
-### Testing the OAuth Flow
-
-1. **Verify OAuth metadata is exposed:**
-   ```bash
-   curl http://localhost:8000/.well-known/oauth-authorization-server | jq
-   ```
-
-2. **Configure TypingMind:**
-   - Add new MCP server with URL: `http://localhost:8000`
-   - Enable OAuth authentication
-   - Connect and follow the browser OAuth flow
-
-3. **Expected flow:**
-   - TypingMind detects OAuth requirement
-   - Opens browser for Google login
-   - Shows consent screen
-   - After approval, returns tokens
-   - Tools become available with prefixes: `context7_*`, `firecrawl_*`, etc.
-
-## Google OAuth Setup
-
-1. Go to [Google Cloud Console](https://console.cloud.google.com/)
-2. Create OAuth credentials
-3. Add redirect URIs:
-   - Local: `http://localhost:8000/auth/callback`
-   - Production: `https://mcp.example.com/auth/callback`
-4. Note Client ID and Secret
-
-## Deployment
-
-Build and deploy Docker container:
-
-```bash
-docker build -t mcp-gateway .
-docker run -d \
-  --name mcp-gateway \
-  -p 443:443 \
-  --env-file .env \
-  mcp-gateway
-```
-
-For GCP Cloud Run, see deployment script (TODO).
 
 ## Client Configuration
 
-### TypingMind
+### Gemini CLI / MCP Inspector
 
-1. Add new MCP server
-2. Server URL: `https://mcp.example.com`
-3. Enable OAuth Client toggle
-4. Follow OAuth flow in browser
+Add to MCP client config:
 
-### Gemini CLI
-
-Configure in `settings.json`:
 ```json
 {
   "mcpServers": {
-    "remote-gateway": {
-      "url": "https://mcp.example.com",
+    "gateway": {
+      "url": "https://mcp.example.com/mcp",
+      "transport": "http"
     }
   }
 }
 ```
 
+The gateway aggregates all servers. Tools are prefixed by server name:
+- `context7_resolve-library-id`
+- `context7_query-docs`
+- `firecrawl_firecrawl_scrape`
+- `firecrawl_firecrawl_search`
+- `linkup_search-web`
+- `openmemory_add-memory`
+- `openmemory_search-memories`
+- `perplexity_search`
+- `perplexity_reason`
+
+## Google OAuth Setup
+
+1. Go to [Google Cloud Console → Credentials](https://console.cloud.google.com/apis/credentials)
+2. Create OAuth 2.0 Client ID (Web application)
+3. Add authorized redirect URIs:
+   - Local testing: `http://localhost:8000/auth/callback`
+   - Production: `https://mcp.example.com/auth/callback`
+4. Copy Client ID and Client Secret to `~/etc/dotfiles/dot-env-secrets`
+
 ## Troubleshooting
 
-Check logs:
+### Check gateway logs (local)
+
 ```bash
-docker logs mcp-gateway
+docker logs mcp-gateway-test
 ```
 
-Test OAuth metadata:
+### Check gateway logs (production)
+
 ```bash
-curl https://mcp.example.com/.well-known/oauth-authorization-server
+gcloud compute ssh mcp-gateway \
+  --project="${GCP_PROJECT_ID}" \
+  --zone="us-central1-a" \
+  --command='docker logs -f mcp-gateway'
 ```
 
-Verify mcp-proxy is running:
+### Test OAuth metadata
+
 ```bash
-curl http://localhost:3100/health
+# Local
+curl http://localhost:8000/.well-known/oauth-authorization-server | jq
+
+# Production
+curl https://mcp.example.com/.well-known/oauth-authorization-server | jq
 ```
 
-## Migration from mcp-auth-proxy
+### Common issues
 
-See `TODO.md` for full migration notes. Key difference: FastMCP natively understands MCP protocol (HTTP+SSE), unlike mcp-auth-proxy which only does HTTP-level proxying.
+**SSL certificate errors in production:**
+- Verify DNS points to correct static IP
+- Check `MCP_DOMAIN` is set correctly (not `mcp.example.com`)
+- Wait 2-3 minutes for Caddy to obtain Let's Encrypt certificate
+- Check Caddy logs: `docker logs mcp-gateway 2>&1 | grep -i cert`
+
+**Gateway not starting:**
+- Verify all environment variables are set
+- Check API keys are valid
+- Ensure MCP server packages can be installed (npm/npx/uvx accessible)
+
+**OAuth flow fails:**
+- Verify redirect URI in Google Console matches exactly
+- Check `MCP_ALLOWED_USERS` includes your email
+- Ensure OAuth Client ID and Secret are correct
+
+## Performance Notes
+
+**Why this is fast:**
+
+According to [FastMCP Issue #1583](https://github.com/jlowin/fastmcp/issues/1583):
+- Direct tool call: ~2ms
+- stdio proxy: ~3ms ✅ (what we use)
+- HTTP proxy: 300-400ms ❌ (100-200x slower!)
+
+We use stdio transport exclusively to avoid HTTP proxy overhead. The gateway handles concurrent requests efficiently because each stdio connection is independent.
+
+## Development History
+
+See `NOTES.md` for full architectural journey:
+- Started with FastMCP + mcp-proxy (HTTP) - too slow
+- Explored per-server mcp-auth-proxy instances - OAuth compatibility issues
+- **Final solution**: FastMCP + stdio directly - fast and simple!
+
+## License
+
+MIT
