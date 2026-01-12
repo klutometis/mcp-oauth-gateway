@@ -27,6 +27,7 @@ WORKDIR /app
 COPY pyproject.toml .
 COPY servers.json .
 COPY gateway.py .
+COPY static/ ./static/
 
 # Install dependencies with uv
 RUN uv sync

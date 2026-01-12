@@ -129,6 +129,7 @@ docker run -d \
   -e MCP_OIDC_CLIENT_ID="${MCP_OIDC_CLIENT_ID}" \
   -e MCP_OIDC_CLIENT_SECRET="${MCP_OIDC_CLIENT_SECRET}" \
   -e MCP_DOMAIN="${MCP_DOMAIN}" \
+  -e MCP_ALLOWED_USERS="${MCP_ALLOWED_USERS}" \
   -e CONTEXT7_API_KEY="${CONTEXT7_API_KEY}" \
   -e FIRECRAWL_API_KEY="${FIRECRAWL_API_KEY}" \
   -e LINKUP_API_KEY="${LINKUP_API_KEY}" \
@@ -145,13 +146,14 @@ export GCP_REGION="${REGION}"
 export MCP_OIDC_CLIENT_ID
 export MCP_OIDC_CLIENT_SECRET
 export MCP_DOMAIN
+export MCP_ALLOWED_USERS
 export CONTEXT7_API_KEY
 export FIRECRAWL_API_KEY
 export LINKUP_API_KEY
 export OPENMEMORY_API_KEY
 export PERPLEXITY_API_KEY
 
-envsubst '$FULL_IMAGE_NAME $GCP_REGION $MCP_OIDC_CLIENT_ID $MCP_OIDC_CLIENT_SECRET $MCP_DOMAIN $CONTEXT7_API_KEY $FIRECRAWL_API_KEY $LINKUP_API_KEY $OPENMEMORY_API_KEY $PERPLEXITY_API_KEY' < /tmp/mcp-gateway-startup.sh > /tmp/mcp-gateway-startup-final.sh
+envsubst '$FULL_IMAGE_NAME $GCP_REGION $MCP_OIDC_CLIENT_ID $MCP_OIDC_CLIENT_SECRET $MCP_DOMAIN $MCP_ALLOWED_USERS $CONTEXT7_API_KEY $FIRECRAWL_API_KEY $LINKUP_API_KEY $OPENMEMORY_API_KEY $PERPLEXITY_API_KEY' < /tmp/mcp-gateway-startup.sh > /tmp/mcp-gateway-startup-final.sh
 
 echo ""
 echo "==> Creating new VM..."
@@ -179,10 +181,31 @@ echo "==> Domain: ${MCP_DOMAIN}"
 echo ""
 echo "Point ${MCP_DOMAIN} DNS A record to ${MCP_GATEWAY_IP}"
 echo ""
-echo "==> Waiting 30 seconds for container to start, then tailing logs..."
-echo "==> Press Ctrl+C to stop watching logs"
+echo "==> Waiting for Docker to be installed and container to start..."
+echo "==> This may take 2-3 minutes (installing Docker, pulling image, starting container)"
 echo ""
-sleep 30
+
+# Poll until docker is available and container is running
+for i in {1..60}; do
+    echo "==> Attempt $i/60: Checking if container is running..."
+    if gcloud compute ssh mcp-gateway \
+        --project="${GCP_PROJECT_ID}" \
+        --zone="${ZONE}" \
+        --command='docker ps --filter name=mcp-gateway --format "{{.Status}}"' 2>/dev/null | grep -q "Up"; then
+        echo "==> Container is running!"
+        break
+    fi
+    if [ $i -eq 60 ]; then
+        echo "==> Timeout waiting for container. Check startup logs with:"
+        echo "    gcloud compute ssh mcp-gateway --project=${GCP_PROJECT_ID} --zone=${ZONE} --command='sudo journalctl -u google-startup-scripts.service'"
+        exit 1
+    fi
+    sleep 5
+done
+
+echo ""
+echo "==> Tailing container logs (Ctrl+C to stop)..."
+echo ""
 
 gcloud compute ssh mcp-gateway \
     --project="${GCP_PROJECT_ID}" \

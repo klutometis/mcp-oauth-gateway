@@ -5,10 +5,11 @@ FastMCP-based OAuth gateway that aggregates multiple MCP servers behind a single
 ## Features
 
 - **Multi-server aggregation**: Single endpoint for all MCP servers
-- **Google OAuth**: OAuth 2.0 with Dynamic Client Registration (DCR)
+- **Google OAuth**: OAuth 2.0 with Dynamic Client Registration (DCR) and verified branding
+- **Email-based access control**: Restrict access to specific Google accounts via `MCP_ALLOWED_USERS`
 - **High performance**: Direct stdio connections to MCP servers (~3ms latency)
 - **Concurrent requests**: Handles multiple simultaneous requests efficiently
-- **Production ready**: Deployed at https://mcp.example.com
+- **Production ready**: Deployed with HTTPS, verified OAuth, and user access restrictions
 
 ## Architecture
 
@@ -36,9 +37,14 @@ Ensure these environment variables are set (from `~/etc/dotfiles/dot-env-secrets
 - `MCP_DOMAIN` - Your domain (e.g., `mcp.example.com`)
 - `MCP_OIDC_CLIENT_ID` - Google OAuth Client ID
 - `MCP_OIDC_CLIENT_SECRET` - Google OAuth Client Secret
-- `MCP_ALLOWED_USERS` - Allowed email addresses
+- `MCP_ALLOWED_USERS` - Comma-separated email addresses (e.g., `bob@example.com,alice@example.com`)
 - `GCP_PROJECT_ID` - GCP project for deployment
 - API keys: `CONTEXT7_API_KEY`, `FIRECRAWL_API_KEY`, `LINKUP_API_KEY`, `OPENMEMORY_API_KEY`, `PERPLEXITY_API_KEY`
+
+**Note on Access Control:**
+- If `MCP_ALLOWED_USERS` is set, only listed emails can use MCP tools (others get 403 Forbidden)
+- If `MCP_ALLOWED_USERS` is not set, **any Google account** can authenticate and use the gateway
+- OAuth verification is public, so access control is enforced at the application layer
 
 ### Local Testing
 

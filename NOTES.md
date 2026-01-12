@@ -1,5 +1,80 @@
 # MCP OAuth Gateway - Development Notes
 
+## 2026-01-12: Email-Based Access Control (SUCCESSFUL!)
+
+### Problem
+
+OAuth verification made the app public (any Google account could authenticate), removing the 15-minute timeout but opening access to everyone. Needed to restrict access to specific email addresses while keeping public OAuth verification.
+
+### Solution Journey (The Wild Ride)
+
+Attempted multiple approaches before finding the working solution:
+
+1. **Attempt: Add `allowed_users` parameter to GoogleProvider** ❌
+   - GoogleProvider doesn't support email filtering
+   - Got `TypeError: GoogleProvider.__init__() got an unexpected keyword argument 'allowed_users'`
+
+2. **Attempt: Check `request.state.user`** ❌  
+   - FastMCP doesn't populate `request.state.user`
+   - Always returned `False`
+
+3. **Attempt: Decode JWT token from Authorization header** ❌
+   - JWT is a "reference token" with minimal claims (iss, aud, client_id, scope, exp, iat, jti)
+   - Email not embedded in JWT - must look up AccessToken via jti
+   - No direct access to token store from middleware
+
+4. **Attempt: Check `request.scope["user"]` with BaseHTTPMiddleware** ❌
+   - BaseHTTPMiddleware creates new Request object, doesn't preserve scope modifications
+   - User still `None` because middleware runs in wrong order
+
+5. **Attempt: Wrap app with pure ASGI middleware after `http_app()`** ❌
+   - Middleware runs BEFORE Starlette's middleware stack (including AuthenticationMiddleware)
+   - User still `None` because auth hasn't happened yet
+
+6. **SOLUTION: Pass pure ASGI middleware via `http_app(middleware=[...])`** ✅
+   - Integrates into Starlette's middleware stack in correct order
+   - Runs AFTER `AuthenticationMiddleware` populates `scope["user"]`
+   - Access email via `scope["user"].access_token.claims["email"]`
+
+### Final Implementation
+
+```python
+class AuthCheckMiddleware:
+    def __init__(self, app):
+        self.app = app
+    
+    async def __call__(self, scope, receive, send):
+        if scope["type"] == "http" and scope["path"].startswith("/mcp"):
+            user = scope.get("user")
+            if user and hasattr(user, "access_token"):
+                email = user.access_token.claims.get("email")
+                user_email = email.lower() if email else ""
+                
+                if allowed_users and user_email not in allowed_users:
+                    # Send 403 Forbidden
+                    ...
+
+middlewares = [Middleware(AuthCheckMiddleware)]
+app = gateway.http_app(middleware=middlewares)
+```
+
+### Key Insights
+
+- FastMCP uses Starlette's `AuthenticationMiddleware` which populates `scope["user"]` with `AuthenticatedUser`
+- `AuthenticatedUser.access_token` contains full user info in `claims` dict
+- GoogleProvider fetches email from Google's userinfo API if email scope is requested
+- Must request `openid email` scopes via `extra_authorize_params` (not `required_scopes`)
+- Middleware must be added via `http_app(middleware=[...])` to run in correct order
+
+### Configuration
+
+Set `MCP_ALLOWED_USERS` environment variable:
+```bash
+MCP_ALLOWED_USERS=bob@example.com,alice@example.com
+```
+
+Users not in the list get 403 Forbidden when calling MCP tools.
+
 ## 2026-01-04: Solution - FastMCP with stdio Transport (SUCCESSFUL!)
 
 ### Problem Recap

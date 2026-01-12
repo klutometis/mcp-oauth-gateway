@@ -1,5 +1,42 @@
 # MCP Gateway - TODO
 
+## ✅ Completed (2026-01-12)
+
+### Email-Based Access Control
+
+Successfully implemented email-based user access control while maintaining public OAuth verification.
+
+**What worked:**
+- ✅ Custom ASGI middleware integrated into FastMCP's middleware stack
+- ✅ Email extracted from GoogleProvider's AccessToken claims
+- ✅ Users not in `MCP_ALLOWED_USERS` receive 403 Forbidden
+- ✅ Explicit `openid email` scope request from Google
+- ✅ Production ready with user restrictions enforced
+
+**Configuration:**
+```bash
+MCP_ALLOWED_USERS=bob@example.com,alice@example.com
+```
+
+**Security model:**
+- Public OAuth verification (no 15-minute timeout)
+- Application-layer access control after authentication
+- Unauthorized users can authenticate but cannot use MCP tools
+
+## ✅ Completed (2026-01-11)
+
+### Google OAuth Verification
+
+Successfully submitted and verified OAuth app with Google for brand verification.
+
+**What worked:**
+- ✅ Static pages at `/`, `/privacy`, `/terms` for compliance
+- ✅ OAuth consent screen configured with verified domain
+- ✅ Brand verification approved by Google
+- ✅ 15-minute session timeout removed (was forcing re-auth)
+
+**Status:** "Your branding has been verified and is being shown to users"
+
 ## ✅ Completed (2026-01-04)
 
 ### FastMCP Gateway with stdio Transport
@@ -10,7 +47,7 @@ Successfully deployed FastMCP OAuth gateway using stdio transport to eliminate H
 - ✅ FastMCP.as_proxy() with stdio servers (bypassing mcp-proxy)
 - ✅ Google OAuth with DCR support
 - ✅ Concurrent request handling (no blocking!)
-- ✅ Production deployment at https://mcp.example.com
+- ✅ Production deployment with HTTPS
 - ✅ Local testing with `./test-local.sh`
 - ✅ Automated deployment with `./deploy-gateway.sh`
 
@@ -25,11 +62,12 @@ Local test: localhost:8000 → FastMCP → stdio MCP servers
 ```
 
 **Key files:**
-- `gateway.py` - FastMCP proxy with stdio configuration
+- `gateway.py` - FastMCP proxy with stdio + email access control
 - `test-local.sh` - Local Docker testing script
 - `deploy-gateway.sh` - GCP deployment automation
 - `entrypoint.sh` - Smart startup (Caddy for prod, direct for local)
 - `Dockerfile` - Includes Node.js, uv, and Caddy
+- `static/` - OAuth verification pages (home, privacy, terms)
 
 ## Maintenance Tasks
 
